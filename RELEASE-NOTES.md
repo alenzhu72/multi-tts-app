@@ -1,4 +1,11 @@
-# v1.0.0 · SRT Voice Studio / 声幕
+# v1.0.1 · TXT 转 SRT 修复 / TXT import fix
+
+- 修复 TXT 包含单独的 `[Music]`、`Adrian:` 等内容时提示“没有可朗读文本”的问题。
+- TXT 默认完整保留标题、冒号前缀和方括号内容；人物名前缀提取改为可选。
+- Fix conversion failures on standalone bracketed text or colon labels. Preserve prose by default; speaker-prefix extraction is now optional.
+- 13 项自动测试通过 / 13 automated tests passed.
+
+## v1.0.0 功能 / Features
 
 Windows 桌面多角色配音工具，支持中英文界面。
 

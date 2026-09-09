@@ -141,6 +141,8 @@ class App(tk.Tk):
         box = tk.Text(win,wrap='word',font=('Microsoft YaHei UI',11),undo=True)
         box.pack(fill='both',expand=True,padx=12,pady=6)
         options = ttk.Frame(win,padding=12); options.pack(fill='x')
+        detect_speakers = tk.BooleanVar(value=False)
+        ttk.Checkbutton(win,text='提取人物名前缀（如 John:） / Extract speaker prefixes (e.g. John:)',variable=detect_speakers).pack(anchor='w',padx=12)
         duration = tk.StringVar()
         ttk.Label(options,text='总时长（可留空） / Total duration (optional)').pack(side='left')
         ttk.Entry(options,textvariable=duration,width=18).pack(side='left',padx=10)
@@ -153,7 +155,7 @@ class App(tk.Tk):
                 value = read_text(path); box.delete('1.0','end'); box.insert('1.0',value)
             except Exception as error: messagebox.showerror('导入失败 / Import failed',str(error),parent=win)
         def convert():
-            try: cues = text_to_cues(box.get('1.0','end'),duration.get())
+            try: cues = text_to_cues(box.get('1.0','end'),duration.get(),detect_speakers.get())
             except Exception as error:
                 messagebox.showerror('转换失败 / Conversion failed',str(error),parent=win); return
             self.cues = cues

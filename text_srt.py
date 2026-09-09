@@ -2,7 +2,7 @@
 import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
-from audio_core import parse_srt, NARRATOR
+from audio_core import extract_speaker, NARRATOR
 
 
 def read_text(path):
@@ -59,31 +59,31 @@ def to_srt(cues, include_speakers=False):
     return '\n\n'.join(blocks) + '\n'
 
 
-def split_text(text):
-    """Keep explicit paragraph speaker labels across sentence splits."""
+def split_text(text, detect_speakers=False):
+    """Preserve prose verbatim; optionally extract explicit dialogue labels."""
     segments = []
     for line in text.lstrip('\ufeff').splitlines():
         line = line.strip()
         if not line:
             continue
-        parsed = parse_srt('1\n00:00:00,000 --> 00:00:01,000\n' + line)[0]
+        content, speaker = extract_speaker(line) if detect_speakers else (line, NARRATOR)
         # Decimal points stay intact; English full stops split at whitespace.
-        sentences = re.findall(r'.+?(?:[。！？!?]+[”’"\']*|\.(?=\s|$)|$)', parsed['text'])
+        sentences = re.findall(r'.+?(?:[。！？!?]+[”’"\']*|\.(?=\s|$)|$)', content)
         for sentence in sentences:
             sentence = sentence.strip()
             # Bound long paragraphs; prefer spaces and comma boundaries.
             while len(sentence) > 100:
                 cut = max(sentence.rfind(' ', 35, 100), sentence.rfind('，', 35, 100), sentence.rfind(',', 35, 100))
                 cut = cut + 1 if cut >= 0 else 100
-                segments.append((sentence[:cut].strip(), parsed['speaker']))
+                segments.append((sentence[:cut].strip(), speaker))
                 sentence = sentence[cut:].strip()
             if sentence:
-                segments.append((sentence, parsed['speaker']))
+                segments.append((sentence, speaker))
     return segments
 
 
-def text_to_cues(text, total_duration=''):
-    segments = split_text(text)
+def text_to_cues(text, total_duration='', detect_speakers=False):
+    segments = split_text(text, detect_speakers)
     if not segments:
         raise ValueError('请输入文字或导入 TXT。 / Enter text or import a TXT file.')
     # Estimate Chinese at 4 characters/sec and Latin words at 2.5 words/sec.

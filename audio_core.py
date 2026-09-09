@@ -14,6 +14,13 @@ from pathlib import Path
 NARRATOR = '画外音'
 DEFAULT_VOICE = 'zh-CN-XiaoxiaoNeural'
 
+def extract_speaker(text):
+    """A label alone is still text, not an empty dialogue cue."""
+    label = re.match(r'^(?:\[([^\]\n]{1,40})\]|([\w\u4e00-\u9fff][\w\u4e00-\u9fff \-]{0,19})[:：])\s*', text)
+    if label and text[label.end():].strip():
+        return text[label.end():].strip(), (label[1] or label[2]).strip()
+    return text, NARRATOR
+
 def parse_srt(source):
     blocks = re.split(r'\n\s*\n', source.lstrip('\ufeff').replace('\r', '').strip())
     cues = []
@@ -33,11 +40,7 @@ def parse_srt(source):
         if end <= start:
             raise ValueError(f'第 {number} 段结束时间必须晚于开始时间。 / End must follow start in block {number}.')
         text = '\n'.join(lines[1:]).strip()
-        speaker = NARRATOR
-        label = re.match(r'^(?:\[([^\]\n]{1,40})\]|([\w\u4e00-\u9fff][\w\u4e00-\u9fff \-]{0,19})[:：])\s*', text)
-        if label:
-            speaker = (label[1] or label[2]).strip()
-            text = text[label.end():].strip()
+        text, speaker = extract_speaker(text)
         if not text:
             raise ValueError(f'第 {number} 段没有可朗读文本。 / No spoken text in block {number}.')
         cues.append(dict(id=number, start=start, end=end, text=text, speaker=speaker))
