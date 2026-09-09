@@ -5,3 +5,9 @@ dist/
 *.spec
 *.log
 verification/
+*.dpapi
+.env
+.env.*
+!.env.example
+credentials*.json
+secrets*.json

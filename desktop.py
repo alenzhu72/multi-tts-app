@@ -9,25 +9,35 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 import asyncio
-from audio_core import NARRATOR, DEFAULT_VOICE, parse_srt, recognize, export_audio, synthesize, effective_voice
+from audio_core import NARRATOR, DEFAULT_VOICE, MINIMAX_BASE, MINIMAX_MODEL, is_minimax, parse_srt, recognize, export_audio, synthesize, effective_voice
 from text_srt import read_text, text_to_cues, to_srt
+from local_settings import load_settings, save_settings, clear_settings
+from edge_voices import VOICES
+from voice_languages import DEFAULT_LANGUAGE, language_options, matching_voices, default_voice, preview_text
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('声幕 · SRT Voice Studio')
+        self.title('声幕 · SRT Voice Studio v1.0.5')
         self.geometry('1380x880'); self.minsize(1200,720)
         self.cues, self.cast = [], {NARRATOR:dict(enabled=True, voice=DEFAULT_VOICE)}
-        self.voices = [DEFAULT_VOICE,'zh-CN-YunxiNeural','zh-CN-YunjianNeural','zh-CN-XiaoyiNeural','en-US-AriaNeural','en-US-GuyNeural']
+        self.voices = list(VOICES)
         self.events, self.cancel = queue.Queue(), threading.Event()
         self.busy = False
         self.preview_dir = tempfile.TemporaryDirectory(prefix='srt-preview-')
         self.vars = {k:tk.StringVar(value=v) for k,v in {
             'engine':'Edge TTS','rate':'0','timing':'连续朗读 / Continuous',
-            'base':'https://api.deepseek.com/v1','model':'deepseek-chat','key':'',
-            'tts_base':'','tts_model':'','tts_key':'', 'filter':'zh-',
+            'base':MINIMAX_BASE,'model':MINIMAX_MODEL,'key':'',
+            'tts_base':'','tts_model':'','tts_key':'', 'filter':'', 'language':DEFAULT_LANGUAGE,
         }.items()}
+        settings_error = False
+        try:
+            for key, value in load_settings().items(): self.vars[key].set(value)
+        except Exception:
+            settings_error = True
         self.status = tk.StringVar(value='导入 SRT / TXT → AI 识别 → 分配声音 → 导出 / Import → Identify → Cast → Export')
+        if settings_error:
+            self.status.set('本地设置无法读取，请重新填写密钥。 / Could not load local settings; re-enter your API key.')
         style = ttk.Style(self); style.theme_use('clam')
         style.configure('.',font=('Microsoft YaHei UI',10))
         style.configure('Treeview', rowheight=30)
@@ -36,7 +46,7 @@ class App(tk.Tk):
         for label,command in [('导入 SRT / Import',self.import_srt),('打开工程 / Open',self.load_project),('保存工程 / Save',self.save_project),('AI / 引擎设置 / Settings',self.settings)]:
             ttk.Button(top,text=label,command=command).pack(side='right',padx=4)
         text_tools = ttk.Frame(self,padding=(14,0,14,8)); text_tools.pack(fill='x')
-        ttk.Button(text_tools,text='TXT / 文字转 SRT · Text to SRT',command=self.text_dialog).pack(side='left',padx=4)
+        ttk.Button(text_tools,text='输入 TXT / SRT · Import text',command=self.text_dialog).pack(side='left',padx=4)
         ttk.Button(text_tools,text='导出 SRT / Export SRT',command=self.export_srt).pack(side='left',padx=4)
         self.include_speakers = tk.BooleanVar(value=False)
         ttk.Checkbutton(text_tools,text='SRT 包含人物标记 / Include speaker labels',variable=self.include_speakers).pack(side='left',padx=10)
@@ -50,6 +60,12 @@ class App(tk.Tk):
         ttk.Label(controls,text='筛选 / Filter').pack(side='left',padx=(15,4))
         search = ttk.Entry(controls,textvariable=self.vars['filter'],width=15); search.pack(side='left')
         search.bind('<KeyRelease>',lambda e:self.render_cast())
+        languages = ttk.Frame(self,padding=(14,0,14,10)); languages.pack(fill='x')
+        ttk.Label(languages,text='配音语言 / Voice language').pack(side='left')
+        self.language_menu = ttk.Combobox(languages,textvariable=self.vars['language'],values=list(language_options(self.voices)),state='readonly',width=48)
+        self.language_menu.pack(side='left',padx=8)
+        self.language_menu.bind('<<ComboboxSelected>>',self.change_language)
+        ttk.Label(languages,text='切换声音语言，不翻译字幕 / Changes voices; does not translate text').pack(side='left',padx=8)
         self.tabs = ttk.Notebook(self); self.tabs.pack(fill='both',expand=True,padx=14)
         table_page = ttk.Frame(self.tabs); self.tabs.add(table_page,text='字幕校正 / Subtitles')
         self.tree = ttk.Treeview(table_page,columns=('id','time','speaker','voice','text'),show='headings',selectmode='extended')
@@ -128,43 +144,71 @@ class App(tk.Tk):
         try:
             source = read_text(path)
             cues = parse_srt(source)
-            self.cues = cues; self.cast = {NARRATOR:dict(enabled=True,voice=DEFAULT_VOICE if self.vars['engine'].get()=='Edge TTS' else 'alloy')}
+            self.cues = cues; self.cast = {NARRATOR:dict(enabled=True,voice=self.selected_default_voice())}
             self.ensure_cast(); self.render()
             self.status.set(f'已导入 / Imported {len(cues)} 条字幕 / cues. 无标记归画外音 / Unlabeled lines use Narrator.')
         except Exception as error: messagebox.showerror('导入失败 / Import failed',str(error))
 
     def text_dialog(self):
         if not self.idle(): return
-        win = tk.Toplevel(self); win.title('文字转 SRT / Text to SRT')
-        win.geometry('860x620'); win.minsize(740,520); win.grab_set()
-        ttk.Label(win,text='粘贴文字或导入 TXT，按句子自动分段。 / Paste text or import TXT; split into sentences.',padding=12).pack(anchor='w')
-        box = tk.Text(win,wrap='word',font=('Microsoft YaHei UI',11),undo=True)
-        box.pack(fill='both',expand=True,padx=12,pady=6)
-        options = ttk.Frame(win,padding=12); options.pack(fill='x')
-        detect_speakers = tk.BooleanVar(value=False)
-        ttk.Checkbutton(win,text='提取人物名前缀（如 John:） / Extract speaker prefixes (e.g. John:)',variable=detect_speakers).pack(anchor='w',padx=12)
-        duration = tk.StringVar()
-        ttk.Label(options,text='总时长（可留空） / Total duration (optional)').pack(side='left')
-        ttk.Entry(options,textvariable=duration,width=18).pack(side='left',padx=10)
-        ttk.Label(win,text='输入秒数或 MM:SS / HH:MM:SS；留空按阅读速度估算。\nEnter seconds or MM:SS / HH:MM:SS; leave blank to estimate from reading speed.\n设定的是字幕时间轴，配音音频不强制压缩到该时长。 / Sets subtitle timing; audio is not forced to this duration.',padding=12).pack(anchor='w')
-        buttons = ttk.Frame(win,padding=12); buttons.pack(fill='x')
-        def load():
-            path = filedialog.askopenfilename(parent=win,filetypes=[('文字 / Text','*.txt')])
+        win = tk.Toplevel(self); win.title('导入 TXT / SRT · Import text or subtitles')
+        width = min(960, self.winfo_screenwidth()-60)
+        height = min(700, self.winfo_screenheight()-100)
+        win.geometry(f'{width}x{height}+20+30'); win.minsize(620,400); win.grab_set()
+        win.columnconfigure(0,weight=1); win.rowconfigure(1,weight=1)
+        header = ttk.Frame(win,padding=8); header.grid(row=0,column=0,sticky='ew')
+        mode = tk.StringVar(value='自动 / Auto')
+        ttk.Label(header,text='输入格式 / Format').pack(side='left')
+        modes = ttk.Combobox(header,textvariable=mode,values=['自动 / Auto','TXT','SRT'],state='readonly',width=16)
+        modes.pack(side='left',padx=8)
+        ttk.Label(header,text='粘贴文字或 SRT / Paste text or SRT').pack(side='left')
+        editor = ttk.Frame(win,padding=(8,0)); editor.grid(row=1,column=0,sticky='nsew')
+        editor.rowconfigure(0,weight=1); editor.columnconfigure(0,weight=1)
+        box = tk.Text(editor,wrap='word',font=('Microsoft YaHei UI',11),undo=True,height=4,width=20)
+        box.grid(row=0,column=0,sticky='nsew')
+        scroll = ttk.Scrollbar(editor,command=box.yview); scroll.grid(row=0,column=1,sticky='ns')
+        box.configure(yscrollcommand=scroll.set)
+        options = ttk.Frame(win,padding=8); options.grid(row=2,column=0,sticky='ew')
+        duration = tk.StringVar(); detect_speakers = tk.BooleanVar(value=False)
+        ttk.Label(options,text='TXT 总时长 / Duration').grid(row=0,column=0,sticky='w')
+        duration_entry = ttk.Entry(options,textvariable=duration,width=14)
+        duration_entry.grid(row=0,column=1,padx=8,sticky='w')
+        hint = ttk.Label(options,text='留空自动估算 / Blank = estimate')
+        hint.grid(row=1,column=0,columnspan=2,sticky='w',pady=3)
+        detect = ttk.Checkbutton(options,text='TXT 提取人物前缀 / Extract speaker prefixes',variable=detect_speakers)
+        detect.grid(row=2,column=0,columnspan=2,sticky='w')
+        note = ttk.Label(options,text='时长支持秒或 HH:MM:SS。SRT 保留原时间轴。\nSeconds or HH:MM:SS. SRT keeps original timing.')
+        note.grid(row=3,column=0,columnspan=2,sticky='w',pady=3)
+        buttons = ttk.Frame(win,padding=8); buttons.grid(row=3,column=0,sticky='ew')
+        def update_mode(*_):
+            srt_mode = mode.get() == 'SRT' or (mode.get() == '自动 / Auto' and '-->' in box.get('1.0','end'))
+            duration_entry.configure(state='disabled' if srt_mode else 'normal')
+            detect.state(['disabled'] if srt_mode else ['!disabled'])
+            hint.configure(text='SRT 使用原始时间轴 / Original SRT timing' if srt_mode else '留空自动估算 / Blank = estimate')
+        mode.trace_add('write',update_mode)
+        def changed(event):
+            if box.edit_modified(): update_mode(); box.edit_modified(False)
+        box.bind('<<Modified>>',changed)
+        def load(kind):
+            path = filedialog.askopenfilename(parent=win,filetypes=[(kind+' file','*.'+kind.lower())])
             if not path: return
             try:
-                value = read_text(path); box.delete('1.0','end'); box.insert('1.0',value)
+                value = read_text(path); box.delete('1.0','end'); box.insert('1.0',value); mode.set(kind)
             except Exception as error: messagebox.showerror('导入失败 / Import failed',str(error),parent=win)
         def convert():
-            try: cues = text_to_cues(box.get('1.0','end'),duration.get(),detect_speakers.get())
+            source = box.get('1.0','end')
+            use_srt = mode.get() == 'SRT' or (mode.get() == '自动 / Auto' and '-->' in source)
+            try: cues = parse_srt(source) if use_srt else text_to_cues(source,duration.get(),detect_speakers.get())
             except Exception as error:
                 messagebox.showerror('转换失败 / Conversion failed',str(error),parent=win); return
             self.cues = cues
-            self.cast = {NARRATOR:dict(enabled=True,voice=DEFAULT_VOICE if self.vars['engine'].get()=='Edge TTS' else 'alloy')}
+            self.cast = {NARRATOR:dict(enabled=True,voice=self.selected_default_voice())}
             self.ensure_cast(); self.render(); self.tabs.select(0)
-            self.status.set(f'已生成 / Created {len(cues)} 条字幕 / cues · {cues[-1]["end"]/1000:.3f} 秒 / seconds')
+            self.status.set(f'已载入 / Loaded {len(cues)} 条字幕 / cues')
             win.destroy()
-        ttk.Button(buttons,text='导入 TXT / Import TXT',command=load).pack(side='left')
-        ttk.Button(buttons,text='生成字幕 / Create subtitles',command=convert).pack(side='right')
+        ttk.Button(buttons,text='导入 TXT / Load TXT',command=lambda:load('TXT')).pack(side='left',padx=3)
+        ttk.Button(buttons,text='导入 SRT / Load SRT',command=lambda:load('SRT')).pack(side='left',padx=3)
+        ttk.Button(buttons,text='确认 / Apply',command=convert).pack(side='right',padx=3)
 
     def export_srt(self):
         if not self.idle(): return
@@ -194,7 +238,7 @@ class App(tk.Tk):
         for child in self.actor_frame.winfo_children(): child.destroy()
         self.cast_vars = {}
         needle = self.vars['filter'].get().lower()
-        voices = [v for v in self.voices if needle in v.lower()] if self.vars['engine'].get()=='Edge TTS' else ['alloy','echo','fable','onyx','nova','shimmer']
+        voices = matching_voices(self.voices,self.vars['language'].get(),needle) if self.vars['engine'].get()=='Edge TTS' else ['alloy','echo','fable','onyx','nova','shimmer']
         for row,(name,actor) in enumerate(self.cast.items()):
             enabled,voice = tk.BooleanVar(value=actor['enabled']),tk.StringVar(value=actor['voice'])
             self.cast_vars[name] = (enabled,voice)
@@ -242,17 +286,42 @@ class App(tk.Tk):
 
     def settings(self):
         if not self.idle(): return
-        win = tk.Toplevel(self); win.title('AI 与 TTS 接口设置 / API settings'); win.geometry('860x460'); win.grab_set()
-        fields = [('base','AI Base URL（按需含 /v1 / if required）'),('model','AI 模型 / Model'),('key','AI API Key'),('tts_base','TTS Base URL (/audio/speech)'),('tts_model','TTS 模型 / Model'),('tts_key','TTS API Key')]
+        win = tk.Toplevel(self); win.title('AI 与 TTS 接口设置 / API settings'); win.geometry('900x570'); win.grab_set()
+        fields = [('key','MiniMax AI API Key'),('base','AI Base URL'),('model','AI 模型 / Model'),('tts_base','TTS Base URL (/audio/speech)'),('tts_model','TTS 模型 / Model'),('tts_key','TTS API Key')]
         for row,(key,label) in enumerate(fields):
             ttk.Label(win,text=label).grid(row=row,column=0,sticky='w',padx=12,pady=10)
-            ttk.Entry(win,textvariable=self.vars[key],width=40,show='*' if 'key' in key else '').grid(row=row,column=1,padx=10)
-        ttk.Label(win,text='AI 会发送字幕到所填接口；TTS 会发送朗读文本。密钥不写入工程。\nAI sends subtitles to your endpoint; TTS sends spoken text. Keys stay in memory.',wraplength=650).grid(row=6,column=0,columnspan=2,pady=12)
-        ttk.Button(win,text='完成 / Done',command=win.destroy).grid(row=7,column=1,pady=8)
+            entry = ttk.Entry(win,textvariable=self.vars[key],width=48,show='*' if 'key' in key else '')
+            entry.grid(row=row,column=1,padx=10)
+            if key == 'key': entry.focus_set()
+        ttk.Label(win,text='密钥使用 Windows 加密保存到本机，下次启动自动读取，不写入工程。\nKeys are encrypted locally for this Windows account and loaded on startup.',wraplength=820).grid(row=6,column=0,columnspan=2,pady=12)
+        def save_close():
+            try: save_settings({key: value.get().strip() for key, value in self.vars.items()})
+            except Exception:
+                messagebox.showerror('保存失败 / Save failed','无法保存本地密钥，请检查本机文件权限。 / Could not save local credentials; check file permissions.',parent=win); return
+            self.status.set('设置已加密保存，下次启动自动读取。 / Settings saved securely and will load on startup.')
+            win.destroy()
+        ttk.Button(win,text='保存并完成 / Save and close',command=save_close).grid(row=7,column=1,pady=8)
+        win.protocol('WM_DELETE_WINDOW',save_close)
+        def defaults():
+            self.vars['base'].set(MINIMAX_BASE); self.vars['model'].set(MINIMAX_MODEL)
+            if self.vars['engine'].get() != 'Edge TTS':
+                self.vars['engine'].set('Edge TTS'); self.change_engine()
+        ttk.Button(win,text='恢复 MiniMax 国内 + Edge / Reset defaults',command=defaults).grid(row=7,column=0,padx=12)
+        ttk.Label(win,text='默认只需填写第一行 AI Key。配音使用免费 Edge，下方 TTS 设置留空。\nOnly the AI Key is needed. Edge TTS is free; leave TTS API fields blank.',wraplength=840).grid(row=8,column=0,columnspan=2,padx=12,pady=8)
+        def forget():
+            try: clear_settings()
+            except Exception:
+                messagebox.showerror('清除失败 / Clear failed','无法删除已保存设置。 / Could not remove saved settings.',parent=win); return
+            self.vars['key'].set(''); self.vars['tts_key'].set('')
+            self.status.set('已清除保存的密钥 / Saved API keys cleared')
+        ttk.Button(win,text='清除本地密钥 / Clear saved keys',command=forget).grid(row=9,column=0,columnspan=2,pady=8)
 
     def analyze(self):
         if not self.idle() or not self.cues: return
         config = {k:v.get().strip() for k,v in self.vars.items()}
+        if is_minimax(config) and not config['key']:
+            self.status.set('请先填写 MiniMax AI API Key / Enter your MiniMax AI API Key first')
+            self.settings(); return
         if not config['base'] or not config['model']:
             self.settings(); return
         cues = copy.deepcopy(self.cues)
@@ -265,22 +334,37 @@ class App(tk.Tk):
     def change_engine(self,event=None):
         if self.busy:
             self.status.set('引擎修改将在下一次任务生效。 / Engine changes apply to the next task.')
-        voice = DEFAULT_VOICE if self.vars['engine'].get()=='Edge TTS' else 'alloy'
+        voice = self.selected_default_voice()
         for actor in self.cast.values(): actor['voice'] = voice
         self.render()
+
+    def selected_default_voice(self):
+        return default_voice(self.voices,self.vars['language'].get()) if self.vars['engine'].get()=='Edge TTS' else 'alloy'
+
+    def change_language(self,event=None):
+        self.vars['filter'].set('')
+        if self.vars['engine'].get() == 'Edge TTS':
+            choices = matching_voices(self.voices,self.vars['language'].get())
+            for index, actor in enumerate(self.cast.values()):
+                if choices and actor['voice'] not in choices:
+                    actor['voice'] = choices[index % len(choices)]
+        self.render()
+        self.status.set('已更新角色声音语言，可逐个调整 / Voice language updated; review individual voice assignments')
 
     def refresh_voices(self):
         async def load():
             import edge_tts
             return await asyncio.wait_for(edge_tts.list_voices(),45)
         def done(voices):
-            self.voices = sorted(v['ShortName'] for v in voices); self.render_cast()
+            self.voices = sorted(v['ShortName'] for v in voices)
+            self.language_menu['values'] = list(language_options(self.voices))
+            self.render_cast()
             self.status.set(f'已加载 / Loaded {len(self.voices)} Edge voices. 输入 zh- / en- 筛选 / Filter by locale.')
         self.run(lambda:asyncio.run(load()),done)
 
     def preview_actor(self,name):
         self.update_actor(name)
-        self.preview('你好，这是这个角色的配音试听。',self.cast[name]['voice'])
+        self.preview(preview_text(self.cast[name]['voice']),self.cast[name]['voice'])
 
     def preview_line(self):
         if not self.tree.selection(): return
@@ -338,7 +422,7 @@ class App(tk.Tk):
                     if k == 'timing': v = {'连续朗读':'连续朗读 / Continuous','按字幕起点（超长顺延）':'按字幕起点（超长顺延） / Subtitle timing'}.get(v,v)
                     if k == 'engine' and v == '兼容 TTS API': v = '兼容 TTS API / Compatible'
                     self.vars[k].set(v)
-            self.ensure_cast(); self.render(); self.status.set('工程已恢复，请重新输入密钥。 / Project loaded; re-enter API keys.')
+            self.ensure_cast(); self.render(); self.status.set('工程已恢复 / Project loaded')
         except Exception as error: messagebox.showerror('工程无效 / Invalid project','文件格式或数据不正确 / Invalid format or data: '+str(error))
 
     def close(self):

@@ -12,7 +12,27 @@ import wave
 from pathlib import Path
 
 NARRATOR = '画外音'
-DEFAULT_VOICE = 'zh-CN-XiaoxiaoNeural'
+DEFAULT_VOICE = 'en-US-AriaNeural'
+MINIMAX_BASE = 'https://api.minimax.cn/v1'
+MINIMAX_MODEL = 'MiniMax-M2.7'
+
+def is_minimax(config):
+    from urllib.parse import urlparse
+    return urlparse(config['base']).hostname in ('api.minimax.cn', 'api.minimax.io', 'api.minimaxi.com')
+
+def ai_response_json(raw):
+    response = json.loads(raw)
+    if response.get('base_resp', {}).get('status_code', 0):
+        raise ValueError('AI 接口错误 / AI API error: ' + str(response['base_resp'].get('status_code')))
+    choices = response.get('choices') or []
+    if not choices or choices[0].get('finish_reason') == 'length':
+        raise ValueError('AI 返回为空或超出输出长度，请缩短输入。 / Empty or truncated AI response; shorten the input.')
+    content = choices[0].get('message', {}).get('content')
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError('AI 未返回人物结果。 / AI returned no character assignments.')
+    content = re.sub(r'^\s*<think>.*?</think>\s*', '', content, count=1, flags=re.DOTALL).strip()
+    content = re.sub(r'^```(?:json)?\s*|\s*```$', '', content)
+    return json.loads(content)
 
 def extract_speaker(text):
     """A label alone is still text, not an empty dialogue cue."""
@@ -97,14 +117,15 @@ def recognize(cues, config, cancel, progress):
                   '不要改写原文。只返回 JSON 对象：{"assignments":[{"id":1,"speaker":"人物名"}]}。'
                   '只对 target 中每个 id 输出一次，不输出 context 的 id。')
         context = cues[max(0, cues.index(batch[0])-8):cues.index(batch[0])]
-        raw = post_json(config['base'], '/chat/completions', config['key'], {
+        payload = {
             'model': config['model'], 'temperature': 0,
             'messages': [{'role':'system','content':prompt}, {'role':'user','content':json.dumps({
                 'known_characters':known, 'context':context,
-                'target':[{'id':c['id'],'text':c['text'],'label':c['speaker']} for c in batch]}, ensure_ascii=False)}]})
-        content = json.loads(raw)['choices'][0]['message']['content'].strip()
-        content = re.sub(r'^```(?:json)?\s*|\s*```$', '', content)
-        mapping = validate_assignments(json.loads(content), batch)
+                'target':[{'id':c['id'],'text':c['text'],'label':c['speaker']} for c in batch]}, ensure_ascii=False)}]}
+        if is_minimax(config):
+            payload.update(temperature=1, reasoning_split=True)
+        raw = post_json(config['base'], '/chat/completions', config['key'], payload)
+        mapping = validate_assignments(ai_response_json(raw), batch)
         result.update(mapping)
         known = sorted(set(known) | set(mapping.values()))
     if cancel.is_set(): raise InterruptedError('已取消 / Cancelled')

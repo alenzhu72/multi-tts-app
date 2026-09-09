@@ -55,4 +55,21 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaises(InterruptedError): export_audio(parse_srt(SRT),cast,{},output,cancel,lambda _:None,fake)
             self.assertEqual(output.read_bytes(),original)
 
+    def test_minimax_reasoning_and_request(self):
+        assignments = {'assignments':[{'id':1,'speaker':'林晓'},{'id':2,'speaker':NARRATOR}]}
+        for prefix in ('', '<think>internal reasoning\nnot JSON</think>\n'):
+            response = json.dumps({'choices':[{'finish_reason':'stop','message':{'content':prefix+'```json\n'+json.dumps(assignments)+'\n```','reasoning_details':[{'text':'reasoning'}]}}]}).encode()
+            with patch('audio_core.post_json',return_value=response) as call:
+                result = recognize(parse_srt(SRT),dict(base=MINIMAX_BASE,key='test-only',model=MINIMAX_MODEL),threading.Event(),lambda _:None)
+                self.assertEqual(result,{1:'林晓',2:NARRATOR})
+                args = call.call_args.args
+                self.assertEqual(args[:2],(MINIMAX_BASE,'/chat/completions'))
+                self.assertTrue(args[3]['reasoning_split'])
+                self.assertEqual(args[3]['model'],MINIMAX_MODEL)
+
+    def test_truncated_or_missing_ai_response(self):
+        for response in ({'choices':[]},{'choices':[{'finish_reason':'length','message':{'content':'{}'}}]}, {'choices':[{'message':{'content':None}}]}, {'base_resp':{'status_code':1004}}):
+            with self.subTest(response=response), self.assertRaises(ValueError):
+                ai_response_json(json.dumps(response).encode())
+
 if __name__ == '__main__': unittest.main()
