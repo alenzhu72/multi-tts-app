@@ -24,6 +24,25 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(effective_voice('B',cast),'n')
         self.assertEqual(effective_voice('missing',cast),'n')
 
+    def test_single_narrator_export_both_formats(self):
+        cast = {NARRATOR:dict(enabled=True,voice='n'),'林晓':dict(enabled=True,voice='actor')}
+        used = []
+        def fake(text,voice,path,config,cancel):
+            used.append((text,voice))
+            with wave.open(str(path),'wb') as f:
+                f.setparams((1,2,24000,0,'NONE','not compressed'))
+                f.writeframes(b'\x01\x00'*2400)
+        cues = parse_srt(SRT)
+        original = json.dumps(cues)
+        with tempfile.TemporaryDirectory() as folder, patch('audio_core.recognize',side_effect=AssertionError('AI must not be called')):
+            for suffix in ('.wav','.mp3'):
+                output = Path(folder)/('narration'+suffix)
+                export_audio(cues,cast,dict(single_narrator=True,timing='连续朗读'),output,threading.Event(),lambda _:None,fake)
+                self.assertGreater(output.stat().st_size,100)
+        self.assertEqual(used,[('你好','n'),('门开了。','n')]*2)
+        self.assertEqual(json.dumps(cues),original)
+        self.assertEqual(effective_voice('林晓',cast),'actor')
+
     def test_ai_missing_duplicate_and_unknown_ids_rejected(self):
         cues = parse_srt(SRT)
         for items in [[{'id':1,'speaker':'A'}],[{'id':1,'speaker':'A'},{'id':1,'speaker':'B'}],[{'id':1,'speaker':'A'},{'id':3,'speaker':'B'}]]:

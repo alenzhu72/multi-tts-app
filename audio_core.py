@@ -150,7 +150,9 @@ def synthesize(text, voice, path, config, cancel):
             'model':config['tts_model'], 'input':text, 'voice':voice,
             'response_format':'mp3', 'speed':max(.25, min(4, 1+config['rate']/100))}))
 
-def effective_voice(speaker, cast):
+def effective_voice(speaker, cast, single_narrator=False):
+    if single_narrator:
+        return cast[NARRATOR]['voice']
     actor = cast.get(speaker, {})
     return actor.get('voice', DEFAULT_VOICE) if actor.get('enabled') else cast[NARRATOR]['voice']
 
@@ -180,7 +182,7 @@ def export_audio(cues, cast, config, output, cancel, progress, synthesizer=synth
                 if cancel.is_set(): raise InterruptedError('已取消 / Cancelled')
                 progress(f'生成音频 / Generating {index+1}/{len(cues)} · {cue["speaker"]}')
                 mp3, wav = tmp/'line.mp3', tmp/'line.wav'
-                synthesizer(cue['text'], effective_voice(cue['speaker'],cast), mp3, config, cancel)
+                synthesizer(cue['text'], effective_voice(cue['speaker'],cast,config.get('single_narrator',False)), mp3, config, cancel)
                 ffmpeg(['-i',mp3,'-ac',1,'-ar',24000,'-c:a','pcm_s16le',wav],cancel)
                 with wave.open(str(wav),'rb') as part:
                     # Preserve speech; shift late lines instead of clipping or overlapping.

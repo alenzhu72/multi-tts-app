@@ -18,7 +18,7 @@ from voice_languages import DEFAULT_LANGUAGE, language_options, matching_voices,
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('声幕 · SRT Voice Studio v1.0.5')
+        self.title('声幕 · SRT Voice Studio v1.0.6')
         self.geometry('1380x880'); self.minsize(1200,720)
         self.cues, self.cast = [], {NARRATOR:dict(enabled=True, voice=DEFAULT_VOICE)}
         self.voices = list(VOICES)
@@ -26,7 +26,7 @@ class App(tk.Tk):
         self.busy = False
         self.preview_dir = tempfile.TemporaryDirectory(prefix='srt-preview-')
         self.vars = {k:tk.StringVar(value=v) for k,v in {
-            'engine':'Edge TTS','rate':'0','timing':'连续朗读 / Continuous',
+            'voice_mode':'单一画外音 / Single narrator','engine':'Edge TTS','rate':'0','timing':'连续朗读 / Continuous',
             'base':MINIMAX_BASE,'model':MINIMAX_MODEL,'key':'',
             'tts_base':'','tts_model':'','tts_key':'', 'filter':'', 'language':DEFAULT_LANGUAGE,
         }.items()}
@@ -35,7 +35,7 @@ class App(tk.Tk):
             for key, value in load_settings().items(): self.vars[key].set(value)
         except Exception:
             settings_error = True
-        self.status = tk.StringVar(value='导入 SRT / TXT → AI 识别 → 分配声音 → 导出 / Import → Identify → Cast → Export')
+        self.status = tk.StringVar(value='导入 SRT / TXT → 选择画外音 → 导出（AI 可选） / Import → Choose narrator → Export (AI optional)')
         if settings_error:
             self.status.set('本地设置无法读取，请重新填写密钥。 / Could not load local settings; re-enter your API key.')
         style = ttk.Style(self); style.theme_use('clam')
@@ -66,6 +66,12 @@ class App(tk.Tk):
         self.language_menu.pack(side='left',padx=8)
         self.language_menu.bind('<<ComboboxSelected>>',self.change_language)
         ttk.Label(languages,text='切换声音语言，不翻译字幕 / Changes voices; does not translate text').pack(side='left',padx=8)
+        mode_bar = ttk.Frame(self,padding=(14,0,14,10)); mode_bar.pack(fill='x')
+        ttk.Label(mode_bar,text='配音模式 / Voice mode').pack(side='left')
+        mode_menu = ttk.Combobox(mode_bar,textvariable=self.vars['voice_mode'],values=['单一画外音 / Single narrator','多角色 / Multiple voices'],state='readonly',width=34)
+        mode_menu.pack(side='left',padx=8)
+        mode_menu.bind('<<ComboboxSelected>>',lambda e:self.render())
+        ttk.Label(mode_bar,text='单一画外音无需 AI 识别或 AI 密钥 / Single narrator needs no AI identification or AI key').pack(side='left')
         self.tabs = ttk.Notebook(self); self.tabs.pack(fill='both',expand=True,padx=14)
         table_page = ttk.Frame(self.tabs); self.tabs.add(table_page,text='字幕校正 / Subtitles')
         self.tree = ttk.Treeview(table_page,columns=('id','time','speaker','voice','text'),show='headings',selectmode='extended')
@@ -98,8 +104,12 @@ class App(tk.Tk):
         self.protocol('WM_DELETE_WINDOW',self.close)
         self.after(100,self.poll); self.render()
 
+    def single_narrator(self):
+        return self.vars['voice_mode'].get() == '单一画外音 / Single narrator'
+
     def config(self):
         data = {k:v.get().strip() for k,v in self.vars.items()}
+        data['single_narrator'] = self.single_narrator()
         data['timing'] = data['timing'].split(' / ')[0]
         data['rate'] = int(data['rate'])
         if not -50 <= data['rate'] <= 100: raise ValueError('语速应在 -50 至 100 之间。 / Rate must be between -50 and 100.')
@@ -229,7 +239,7 @@ class App(tk.Tk):
         selected = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
         for i,c in enumerate(self.cues):
-            self.tree.insert('', 'end',iid=str(i),values=(c['id'],f'{c["start"]/1000:.3f} → {c["end"]/1000:.3f}',c['speaker'],effective_voice(c['speaker'],self.cast),c['text'].replace('\n',' / ')))
+            self.tree.insert('', 'end',iid=str(i),values=(c['id'],f'{c["start"]/1000:.3f} → {c["end"]/1000:.3f}',c['speaker'],effective_voice(c['speaker'],self.cast,self.single_narrator()),c['text'].replace('\n',' / ')))
         self.tree.selection_set([i for i in selected if self.tree.exists(i)])
         self.assign['values'] = list(self.cast)
         self.render_cast()
@@ -244,7 +254,7 @@ class App(tk.Tk):
             self.cast_vars[name] = (enabled,voice)
             check = ttk.Checkbutton(self.actor_frame,text=('画外音 / Narrator' if name == NARRATOR else name),variable=enabled,command=lambda n=name:self.update_actor(n))
             check.grid(row=row,column=0,sticky='w',padx=8,pady=8)
-            if name == NARRATOR: check.state(['disabled'])
+            if name == NARRATOR or self.single_narrator(): check.state(['disabled'])
             ttk.Label(self.actor_frame,text=f'{sum(c["speaker"]==name for c in self.cues)} 句 / lines').grid(row=row,column=1,padx=12)
             combo = ttk.Combobox(self.actor_frame,textvariable=voice,values=voices,width=43)
             combo.grid(row=row,column=2,sticky='ew',padx=8)
@@ -257,7 +267,7 @@ class App(tk.Tk):
         enabled,voice = self.cast_vars[name]
         self.cast[name] = dict(enabled=True if name==NARRATOR else enabled.get(),voice=voice.get().strip() or self.cast[NARRATOR]['voice'])
         # Update only table values to avoid destroying focused dropdowns.
-        for i,c in enumerate(self.cues): self.tree.set(str(i),'voice',effective_voice(c['speaker'],self.cast))
+        for i,c in enumerate(self.cues): self.tree.set(str(i),'voice',effective_voice(c['speaker'],self.cast,self.single_narrator()))
 
     def add_actor(self):
         if not self.idle(): return
@@ -307,7 +317,7 @@ class App(tk.Tk):
             if self.vars['engine'].get() != 'Edge TTS':
                 self.vars['engine'].set('Edge TTS'); self.change_engine()
         ttk.Button(win,text='恢复 MiniMax 国内 + Edge / Reset defaults',command=defaults).grid(row=7,column=0,padx=12)
-        ttk.Label(win,text='默认只需填写第一行 AI Key。配音使用免费 Edge，下方 TTS 设置留空。\nOnly the AI Key is needed. Edge TTS is free; leave TTS API fields blank.',wraplength=840).grid(row=8,column=0,columnspan=2,padx=12,pady=8)
+        ttk.Label(win,text='仅 AI 识别需要 AI Key；单一画外音使用 Edge 无需任何密钥。\nAI Key is only needed for identification. Edge narration needs no keys.',wraplength=840).grid(row=8,column=0,columnspan=2,padx=12,pady=8)
         def forget():
             try: clear_settings()
             except Exception:
@@ -327,6 +337,7 @@ class App(tk.Tk):
         cues = copy.deepcopy(self.cues)
         def done(mapping):
             for c in self.cues: c['speaker'] = mapping[c['id']]
+            self.vars['voice_mode'].set('多角色 / Multiple voices')
             self.ensure_cast(); self.render(); self.tabs.select(1)
             self.status.set('AI 识别完成，请选择人物并校正。 / Identification complete. Enable characters and review assignments.')
         self.run(lambda:recognize(cues,config,self.cancel,self.progress),done)
@@ -369,7 +380,7 @@ class App(tk.Tk):
     def preview_line(self):
         if not self.tree.selection(): return
         c = self.cues[int(self.tree.selection()[0])]
-        self.preview(c['text'],effective_voice(c['speaker'],self.cast))
+        self.preview(c['text'],effective_voice(c['speaker'],self.cast,self.single_narrator()))
 
     def preview(self,text,voice):
         try: config = self.config()
@@ -416,6 +427,7 @@ class App(tk.Tk):
                 assert isinstance(name,str) and type(actor['enabled']) is bool and isinstance(actor['voice'],str) and actor['voice']
             settings = data.get('settings',{})
             assert isinstance(settings,dict) and all(isinstance(v,str) for v in settings.values())
+            self.vars['voice_mode'].set('多角色 / Multiple voices')  # Preserve legacy projects.
             self.cues,self.cast = data['cues'],data['cast']; self.cast[NARRATOR]['enabled']=True
             for k,v in settings.items():
                 if k in self.vars and 'key' not in k:

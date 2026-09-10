@@ -2,6 +2,8 @@
 
 [下载 Windows EXE / Download](https://github.com/alenzhu72/multi-tts-app/releases/latest) · [桌面版使用说明 / Desktop guide](DESKTOP-README.md)
 
+**v1.0.6：新增默认单一画外音模式，无需 AI 识别或 AI 密钥即可导出 WAV / MP3。**
+
 **新增 Windows 桌面版：双击 `dist/SRT-Voice-Studio.exe`。** 支持 Edge TTS、AI 故事人物识别、选择人物独立配音，其余归画外音，并导出整段 MP3 / WAV。参见 [桌面版说明](DESKTOP-README.md)。以下为保留的旧网页原型说明。
 
 这是一个本地网页工具，用来把 SRT 字幕自动初分成多个人物，并把识别到的人物合并映射到有限数量的系统声音角色。
