@@ -68,17 +68,36 @@ def parse_srt(source):
         raise ValueError('SRT 文件为空。 / Empty SRT file.')
     return cues
 
-def post_json(base, endpoint, key, payload):
+def post_json(base, endpoint, key, payload, *, cancel=None, progress=None, label='接口 / API', timeout=180):
+    cancel = cancel if cancel is not None else threading.Event()
+    progress = progress or (lambda _: None)
     url = base.rstrip('/') + endpoint
     if not re.match(r'^https?://', url):
         raise ValueError('接口地址必须以 http:// 或 https:// 开头。 / Base URL must start with http:// or https://.')
     req = urllib.request.Request(url, json.dumps(payload).encode(), {
         'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key})
-    try:
-        with urllib.request.urlopen(req, timeout=120) as response:
-            return response.read()
-    except urllib.error.HTTPError as error:
-        raise RuntimeError(f'接口返回 HTTP {error.code}，请检查地址、模型、密钥或额度。 / Check endpoint, model, key and quota.') from None
+    for attempt in range(3):
+        if cancel.is_set(): raise InterruptedError('已取消 / Cancelled')
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                result = response.read()
+            if cancel.is_set(): raise InterruptedError('已取消 / Cancelled')
+            return result
+        except urllib.error.HTTPError as error:
+            retryable = error.code in (408, 429, 500, 502, 503, 504)
+            reason = f'HTTP {error.code}'
+            error.close()
+            if not retryable:
+                raise RuntimeError(f'{label}：{reason}，请检查接口地址、模型、密钥或额度。 / Check endpoint, model, key and quota.') from None
+        except (TimeoutError, ConnectionError, urllib.error.URLError) as error:
+            if cancel.is_set(): raise InterruptedError('已取消 / Cancelled')
+            reason = '网络连接或读取超时 / Network connection or read timeout'
+        if cancel.is_set(): raise InterruptedError('已取消 / Cancelled')
+        if attempt == 2:
+            raise RuntimeError(f'{label}：{reason}；已尝试 3 次。请检查网络或服务状态后重试。 / Failed after 3 attempts; check network or service availability and retry.') from None
+        progress(f'{label}：{reason}，正在重试 {attempt+2}/3 / Retrying')
+        if cancel.wait(2 * (attempt + 1)): raise InterruptedError('已取消 / Cancelled')
+
 
 def validate_assignments(data, batch):
     assignments = data.get('assignments')
@@ -105,7 +124,7 @@ def recognize(cues, config, cancel, progress):
         cost = len(cue['text'])
         if cost > 20000:
             raise ValueError('单条字幕超过 20000 字，请先拆分。 / Split cues longer than 20,000 characters.')
-        if batch and (len(batch) >= 60 or size + cost > 16000):
+        if batch and (len(batch) >= 30 or size + cost > 8000):
             batches.append(batch); batch, size = [], 0
         batch.append(cue); size += cost
     if batch: batches.append(batch)
@@ -124,7 +143,8 @@ def recognize(cues, config, cancel, progress):
                 'target':[{'id':c['id'],'text':c['text'],'label':c['speaker']} for c in batch]}, ensure_ascii=False)}]}
         if is_minimax(config):
             payload.update(temperature=1, reasoning_split=True)
-        raw = post_json(config['base'], '/chat/completions', config['key'], payload)
+        raw = post_json(config['base'], '/chat/completions', config['key'], payload,
+                        cancel=cancel, progress=progress, label=f'AI 人物识别 / Identification {index+1}/{len(batches)}', timeout=300)
         mapping = validate_assignments(ai_response_json(raw), batch)
         result.update(mapping)
         known = sorted(set(known) | set(mapping.values()))
@@ -139,7 +159,9 @@ async def edge_save(text, voice, path, rate, cancel):
             await asyncio.wait_for(edge_tts.Communicate(text, voice, rate=f'{rate:+d}%').save(str(path)), 75)
             return
         except Exception:
-            if attempt == 2: raise
+            if cancel.is_set(): raise InterruptedError('已取消 / Cancelled')
+            if attempt == 2:
+                raise RuntimeError('Edge 配音失败，已尝试 3 次。请检查网络和声音 ID 后重试。 / Edge TTS failed after 3 attempts; check network and voice ID.') from None
             await asyncio.sleep(1 + attempt)
 
 def synthesize(text, voice, path, config, cancel):
@@ -148,7 +170,7 @@ def synthesize(text, voice, path, config, cancel):
     else:
         path.write_bytes(post_json(config['tts_base'], '/audio/speech', config['tts_key'], {
             'model':config['tts_model'], 'input':text, 'voice':voice,
-            'response_format':'mp3', 'speed':max(.25, min(4, 1+config['rate']/100))}))
+            'response_format':'mp3', 'speed':max(.25, min(4, 1+config['rate']/100))}, cancel=cancel, label='TTS 配音 / Speech synthesis'))
 
 def effective_voice(speaker, cast, single_narrator=False):
     if single_narrator:
@@ -182,7 +204,12 @@ def export_audio(cues, cast, config, output, cancel, progress, synthesizer=synth
                 if cancel.is_set(): raise InterruptedError('已取消 / Cancelled')
                 progress(f'生成音频 / Generating {index+1}/{len(cues)} · {cue["speaker"]}')
                 mp3, wav = tmp/'line.mp3', tmp/'line.wav'
-                synthesizer(cue['text'], effective_voice(cue['speaker'],cast,config.get('single_narrator',False)), mp3, config, cancel)
+                try:
+                    synthesizer(cue['text'], effective_voice(cue['speaker'],cast,config.get('single_narrator',False)), mp3, config, cancel)
+                except InterruptedError:
+                    raise
+                except Exception as error:
+                    raise RuntimeError(f'配音第 {index+1}/{len(cues)} 句（字幕 {cue["id"]}）失败 / Speech synthesis failed: {error}') from None
                 ffmpeg(['-i',mp3,'-ac',1,'-ar',24000,'-c:a','pcm_s16le',wav],cancel)
                 with wave.open(str(wav),'rb') as part:
                     # Preserve speech; shift late lines instead of clipping or overlapping.

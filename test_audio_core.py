@@ -86,6 +86,20 @@ class PipelineTests(unittest.TestCase):
                 self.assertTrue(args[3]['reasoning_split'])
                 self.assertEqual(args[3]['model'],MINIMAX_MODEL)
 
+    def test_long_story_batches_keep_all_assignments(self):
+        cues = [dict(id=i,start=i*1000,end=(i+1)*1000,text='A short sentence.',speaker=NARRATOR) for i in range(1,331)]
+        sizes = []
+        def response(base,endpoint,key,payload,**kwargs):
+            target = json.loads(payload['messages'][1]['content'])['target']
+            sizes.append(len(target))
+            self.assertEqual(kwargs['timeout'],300)
+            content = json.dumps({'assignments':[dict(id=c['id'],speaker=NARRATOR) for c in target]})
+            return json.dumps({'choices':[{'message':{'content':content}}]}).encode()
+        with patch('audio_core.post_json',side_effect=response):
+            result = recognize(cues,dict(base=MINIMAX_BASE,key='test',model=MINIMAX_MODEL),threading.Event(),lambda _:None)
+        self.assertEqual(set(result),set(range(1,331)))
+        self.assertEqual(sizes,[30]*11)
+
     def test_truncated_or_missing_ai_response(self):
         for response in ({'choices':[]},{'choices':[{'finish_reason':'length','message':{'content':'{}'}}]}, {'choices':[{'message':{'content':None}}]}, {'base_resp':{'status_code':1004}}):
             with self.subTest(response=response), self.assertRaises(ValueError):

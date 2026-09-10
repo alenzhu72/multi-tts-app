@@ -18,7 +18,7 @@ from voice_languages import DEFAULT_LANGUAGE, language_options, matching_voices,
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('声幕 · SRT Voice Studio v1.0.6')
+        self.title('声幕 · SRT Voice Studio v1.0.7')
         self.geometry('1380x880'); self.minsize(1200,720)
         self.cues, self.cast = [], {NARRATOR:dict(enabled=True, voice=DEFAULT_VOICE)}
         self.voices = list(VOICES)
