@@ -9,6 +9,7 @@ import threading
 import urllib.request
 import urllib.error
 import wave
+import urllib.parse
 from pathlib import Path
 
 NARRATOR = '画外音'
@@ -167,6 +168,23 @@ async def edge_save(text, voice, path, rate, cancel):
 def synthesize(text, voice, path, config, cancel):
     if config['engine'] == 'Edge TTS':
         asyncio.run(edge_save(text, voice, path, config['rate'], cancel))
+    elif config['engine'] == 'Fish Audio':
+        if not config.get('fish_key'):
+            raise ValueError('请在设置中填写 Fish Audio API Key。 / Enter your Fish Audio API key in Settings.')
+        if not voice or voice.startswith(('儿童','中年','老年','沙哑','慈祥')):
+            raise ValueError('Fish Audio 需要声音模型 ID。请把 fish.audio 的模型 ID 填入声音栏。 / Enter a Fish Audio model ID in the voice field.')
+        req = urllib.request.Request('https://api.fish.audio/v1/tts', json.dumps({
+            'text': text, 'reference_id': voice, 'format': 'mp3',
+            'mp3_bitrate': 192, 'normalize': True, 'prosody': {
+                'speed': max(.5, min(2, 1 + config['rate'] / 100)), 'volume': 0,
+                'normalize_loudness': True}}, ensure_ascii=False).encode(), {
+            'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config['fish_key'], 'model': 's2-pro'})
+        try:
+            with urllib.request.urlopen(req, timeout=300) as response: path.write_bytes(response.read())
+        except urllib.error.HTTPError as error:
+            raise RuntimeError(f'Fish Audio HTTP {error.code}：请检查 API Key 和声音模型 ID。 / Check Fish API key and model ID.') from None
+        except (TimeoutError, urllib.error.URLError):
+            raise RuntimeError('Fish Audio 网络或读取超时，请重试。 / Fish Audio network or read timeout; retry.') from None
     else:
         path.write_bytes(post_json(config['tts_base'], '/audio/speech', config['tts_key'], {
             'model':config['tts_model'], 'input':text, 'voice':voice,

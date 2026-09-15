@@ -9,3 +9,10 @@ Windows x64 单文件 EXE（未签名），内置 Python / FFmpeg。Edge TTS 需
 超时重试可能产生额外 API 用量；正在读取的请求取消可能需等待返回或超时。
 
 验证：28 项自动化测试通过（包含模拟读取超时、重试、取消、330 句分批识别）；EXE 启动测试通过。未调用用户的付费 AI 接口。
+
+# v1.0.8 — Fish Audio TTS
+
+- 新增 Fish Audio 引擎、API Key 设置和官方 v1/tts 调用。
+- 支持为画外音及每个角色手动填写 Fish Audio reference_id。
+- 提供儿童/中年/老年、男女、沙哑/慈祥等可编辑提示项；实际模型 ID 以 Fish Audio 模型页面为准。
+- 保留 Edge、兼容 TTS API、单一画外音和多角色模式。

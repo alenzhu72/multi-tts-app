@@ -28,7 +28,7 @@ class App(tk.Tk):
         self.vars = {k:tk.StringVar(value=v) for k,v in {
             'voice_mode':'单一画外音 / Single narrator','engine':'Edge TTS','rate':'0','timing':'连续朗读 / Continuous',
             'base':MINIMAX_BASE,'model':MINIMAX_MODEL,'key':'',
-            'tts_base':'','tts_model':'','tts_key':'', 'filter':'', 'language':DEFAULT_LANGUAGE,
+            'tts_base':'','tts_model':'','tts_key':'','fish_key':'', 'filter':'', 'language':DEFAULT_LANGUAGE,
         }.items()}
         settings_error = False
         try:
@@ -52,7 +52,7 @@ class App(tk.Tk):
         ttk.Checkbutton(text_tools,text='SRT 包含人物标记 / Include speaker labels',variable=self.include_speakers).pack(side='left',padx=10)
         controls = ttk.Frame(self,padding=(14,0,14,10)); controls.pack(fill='x')
         ttk.Label(controls,text='引擎 / Engine').pack(side='left')
-        engine = ttk.Combobox(controls,textvariable=self.vars['engine'],values=['Edge TTS','兼容 TTS API / Compatible'],state='readonly',width=24)
+        engine = ttk.Combobox(controls,textvariable=self.vars['engine'],values=['Edge TTS','Fish Audio','兼容 TTS API / Compatible'],state='readonly',width=24)
         engine.pack(side='left',padx=6); engine.bind('<<ComboboxSelected>>',self.change_engine)
         ttk.Button(controls,text='AI 识别人物 / Identify',command=self.analyze).pack(side='left',padx=5)
         ttk.Button(controls,text='添加人物 / Add',command=self.add_actor).pack(side='left',padx=5)
@@ -113,7 +113,9 @@ class App(tk.Tk):
         data['timing'] = data['timing'].split(' / ')[0]
         data['rate'] = int(data['rate'])
         if not -50 <= data['rate'] <= 100: raise ValueError('语速应在 -50 至 100 之间。 / Rate must be between -50 and 100.')
-        if data['engine'] != 'Edge TTS' and not all(data[k] for k in ('tts_base','tts_model')):
+        if data['engine'] == 'Fish Audio' and not data.get('fish_key'):
+            raise ValueError('请先在设置中填写 Fish Audio API Key。 / Enter your Fish Audio API Key in Settings first.')
+        if data['engine'] == '兼容 TTS API / Compatible' and not all(data[k] for k in ('tts_base','tts_model')):
             raise ValueError('请先配置 TTS 接口地址和模型。 / Configure the TTS base URL and model first.')
         return data
 
@@ -248,7 +250,7 @@ class App(tk.Tk):
         for child in self.actor_frame.winfo_children(): child.destroy()
         self.cast_vars = {}
         needle = self.vars['filter'].get().lower()
-        voices = matching_voices(self.voices,self.vars['language'].get(),needle) if self.vars['engine'].get()=='Edge TTS' else ['alloy','echo','fable','onyx','nova','shimmer']
+        voices = matching_voices(self.voices,self.vars['language'].get(),needle) if self.vars['engine'].get()=='Edge TTS' else (['儿童男声（填 Fish 模型 ID）','儿童女声（填 Fish 模型 ID）','中年男声（填 Fish 模型 ID）','中年女声（填 Fish 模型 ID）','老年男声（填 Fish 模型 ID）','老年女声（填 Fish 模型 ID）','沙哑男声（填 Fish 模型 ID）','慈祥女声（填 Fish 模型 ID）'] if self.vars['engine'].get()=='Fish Audio' else ['alloy','echo','fable','onyx','nova','shimmer'])
         for row,(name,actor) in enumerate(self.cast.items()):
             enabled,voice = tk.BooleanVar(value=actor['enabled']),tk.StringVar(value=actor['voice'])
             self.cast_vars[name] = (enabled,voice)
@@ -297,7 +299,7 @@ class App(tk.Tk):
     def settings(self):
         if not self.idle(): return
         win = tk.Toplevel(self); win.title('AI 与 TTS 接口设置 / API settings'); win.geometry('900x570'); win.grab_set()
-        fields = [('key','MiniMax AI API Key'),('base','AI Base URL'),('model','AI 模型 / Model'),('tts_base','TTS Base URL (/audio/speech)'),('tts_model','TTS 模型 / Model'),('tts_key','TTS API Key')]
+        fields = [('key','MiniMax AI API Key'),('base','AI Base URL'),('model','AI 模型 / Model'),('fish_key','Fish Audio API Key'),('tts_base','TTS Base URL (/audio/speech)'),('tts_model','TTS 模型 / Model'),('tts_key','TTS API Key')]
         for row,(key,label) in enumerate(fields):
             ttk.Label(win,text=label).grid(row=row,column=0,sticky='w',padx=12,pady=10)
             entry = ttk.Entry(win,textvariable=self.vars[key],width=48,show='*' if 'key' in key else '')
@@ -350,7 +352,7 @@ class App(tk.Tk):
         self.render()
 
     def selected_default_voice(self):
-        return default_voice(self.voices,self.vars['language'].get()) if self.vars['engine'].get()=='Edge TTS' else 'alloy'
+        return default_voice(self.voices,self.vars['language'].get()) if self.vars['engine'].get()=='Edge TTS' else ('儿童男声（填 Fish 模型 ID）' if self.vars['engine'].get()=='Fish Audio' else 'alloy')
 
     def change_language(self,event=None):
         self.vars['filter'].set('')

@@ -3,6 +3,7 @@ import tempfile
 import threading
 import unittest
 import wave
+import io
 from pathlib import Path
 from unittest.mock import patch
 from audio_core import *
@@ -10,6 +11,21 @@ from audio_core import *
 SRT = '\ufeff1\r\n00:00:01,000 --> 00:00:02,000\r\n林晓：你好\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,000\r\n门开了。'
 
 class PipelineTests(unittest.TestCase):
+    def test_fish_audio_request_uses_reference_id_and_key(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self): return b'fish-mp3'
+        with tempfile.TemporaryDirectory() as folder, patch('audio_core.urllib.request.urlopen', return_value=Response()) as call:
+            path = Path(folder) / 'fish.mp3'
+            synthesize('hello', 'fish-model-id', path, dict(engine='Fish Audio', fish_key='secret', rate=0), threading.Event())
+            request = call.call_args.args[0]
+            self.assertEqual(request.full_url, 'https://api.fish.audio/v1/tts')
+            self.assertEqual(request.get_header('Authorization'), 'Bearer secret')
+            self.assertEqual(request.get_header('Model'), 's2-pro')
+            self.assertIn(b'fish-model-id', request.data)
+            self.assertEqual(path.read_bytes(), b'fish-mp3')
+
     def test_parser_and_unknown(self):
         cues = parse_srt(SRT)
         self.assertEqual((cues[0]['speaker'],cues[0]['text']),('林晓','你好'))

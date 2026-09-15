@@ -10,6 +10,12 @@ AI 按最多 30 句 / 8000 字符分批，每次请求读取超时为 300 秒。
 
 失败提示会区分 AI 批次、TTS 和配音句号；网络中断仍可能导致失败，重试不能保证远端服务可用。请求超时后重试可能产生额外 API 用量。
 
+## Fish Audio（v1.0.8）
+
+「AI / 引擎设置」新增 Fish Audio。填写 Fish Audio API Key（从 fish.audio/app/api-keys 获取），将引擎切换为 Fish Audio；在“人物与声音”中为画外音或每个角色填写 Fish Audio 声音模型 ID（fish.audio 声音页面 URL 中的 `/m/<模型 ID>`）。程序调用官方 `https://api.fish.audio/v1/tts`，使用 `s2-pro` 和 MP3 输出，再按原流程合成为 MP3/WAV。
+
+Fish Audio 的声音模型由平台和模型创建者提供，官方接口使用 `reference_id`，没有固定的“儿童男/女、中年男/女、老年男/女、沙哑、慈祥”内置枚举。界面提供这些描述作为可编辑提示项；请将实际模型 ID 粘贴到声音栏后使用。模型可手动分配给画外音或任意角色，年龄、性别和音色以模型页面及试听为准。
+
 ## 单一画外音（v1.0.6）
 
 默认选择「单一画外音 / Single narrator」。导入 SRT 或在「输入 TXT / SRT」中粘贴文字，在「人物与声音」页选择画外音声音，然后直接「导出 / Export MP3 / WAV」。无需点击 AI 识别，也无需 AI API Key；Edge TTS 仍需联网。
