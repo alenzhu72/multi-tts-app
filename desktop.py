@@ -18,7 +18,7 @@ from voice_languages import DEFAULT_LANGUAGE, language_options, matching_voices,
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('声幕 · SRT Voice Studio v1.0.7')
+        self.title('声幕 · SRT Voice Studio v1.0.9')
         self.geometry('1380x880'); self.minsize(1200,720)
         self.cues, self.cast = [], {NARRATOR:dict(enabled=True, voice=DEFAULT_VOICE)}
         self.voices = list(VOICES)
@@ -28,7 +28,7 @@ class App(tk.Tk):
         self.vars = {k:tk.StringVar(value=v) for k,v in {
             'voice_mode':'单一画外音 / Single narrator','engine':'Edge TTS','rate':'0','timing':'连续朗读 / Continuous',
             'base':MINIMAX_BASE,'model':MINIMAX_MODEL,'key':'',
-            'tts_base':'','tts_model':'','tts_key':'','fish_key':'', 'filter':'', 'language':DEFAULT_LANGUAGE,
+            'tts_base':'','tts_model':'','tts_key':'','fish_key':'','fish_model':'s2.1-pro-free', 'filter':'', 'language':DEFAULT_LANGUAGE,
         }.items()}
         settings_error = False
         try:
@@ -298,35 +298,35 @@ class App(tk.Tk):
 
     def settings(self):
         if not self.idle(): return
-        win = tk.Toplevel(self); win.title('AI 与 TTS 接口设置 / API settings'); win.geometry('900x570'); win.grab_set()
-        fields = [('key','MiniMax AI API Key'),('base','AI Base URL'),('model','AI 模型 / Model'),('fish_key','Fish Audio API Key'),('tts_base','TTS Base URL (/audio/speech)'),('tts_model','TTS 模型 / Model'),('tts_key','TTS API Key')]
+        win = tk.Toplevel(self); win.title('AI 与 TTS 接口设置 / API settings'); win.geometry('900x700'); win.grab_set()
+        fields = [('key','MiniMax AI API Key'),('base','AI Base URL'),('model','AI 模型 / Model'),('fish_key','Fish Audio API Key'),('fish_model','Fish 模型（与网页一致） / Model'),('tts_base','TTS Base URL (/audio/speech)'),('tts_model','TTS 模型 / Model'),('tts_key','TTS API Key')]
         for row,(key,label) in enumerate(fields):
             ttk.Label(win,text=label).grid(row=row,column=0,sticky='w',padx=12,pady=10)
-            entry = ttk.Entry(win,textvariable=self.vars[key],width=48,show='*' if 'key' in key else '')
+            entry = ttk.Combobox(win,textvariable=self.vars[key],values=['s2.1-pro-free','s2-pro','s1'],width=48) if key == 'fish_model' else ttk.Entry(win,textvariable=self.vars[key],width=48,show='*' if 'key' in key else '')
             entry.grid(row=row,column=1,padx=10)
             if key == 'key': entry.focus_set()
-        ttk.Label(win,text='密钥使用 Windows 加密保存到本机，下次启动自动读取，不写入工程。\nKeys are encrypted locally for this Windows account and loaded on startup.',wraplength=820).grid(row=6,column=0,columnspan=2,pady=12)
+        ttk.Label(win,text='密钥使用 Windows 加密保存到本机，下次启动自动读取，不写入工程。\nKeys are encrypted locally for this Windows account and loaded on startup.',wraplength=820).grid(row=len(fields),column=0,columnspan=2,pady=12)
         def save_close():
             try: save_settings({key: value.get().strip() for key, value in self.vars.items()})
             except Exception:
                 messagebox.showerror('保存失败 / Save failed','无法保存本地密钥，请检查本机文件权限。 / Could not save local credentials; check file permissions.',parent=win); return
             self.status.set('设置已加密保存，下次启动自动读取。 / Settings saved securely and will load on startup.')
             win.destroy()
-        ttk.Button(win,text='保存并完成 / Save and close',command=save_close).grid(row=7,column=1,pady=8)
+        ttk.Button(win,text='保存并完成 / Save and close',command=save_close).grid(row=len(fields)+1,column=1,pady=8)
         win.protocol('WM_DELETE_WINDOW',save_close)
         def defaults():
             self.vars['base'].set(MINIMAX_BASE); self.vars['model'].set(MINIMAX_MODEL)
             if self.vars['engine'].get() != 'Edge TTS':
                 self.vars['engine'].set('Edge TTS'); self.change_engine()
-        ttk.Button(win,text='恢复 MiniMax 国内 + Edge / Reset defaults',command=defaults).grid(row=7,column=0,padx=12)
-        ttk.Label(win,text='仅 AI 识别需要 AI Key；单一画外音使用 Edge 无需任何密钥。\nAI Key is only needed for identification. Edge narration needs no keys.',wraplength=840).grid(row=8,column=0,columnspan=2,padx=12,pady=8)
+        ttk.Button(win,text='恢复 MiniMax 国内 + Edge / Reset defaults',command=defaults).grid(row=len(fields)+1,column=0,padx=12)
+        ttk.Label(win,text='Fish 模型需与网页 API 体验场一致；声音栏填写 reference_id。\nFish model must match the API playground; enter reference_id in the voice field.',wraplength=840).grid(row=len(fields)+2,column=0,columnspan=2,padx=12,pady=8)
         def forget():
             try: clear_settings()
             except Exception:
                 messagebox.showerror('清除失败 / Clear failed','无法删除已保存设置。 / Could not remove saved settings.',parent=win); return
-            self.vars['key'].set(''); self.vars['tts_key'].set('')
+            self.vars['key'].set(''); self.vars['tts_key'].set(''); self.vars['fish_key'].set('')
             self.status.set('已清除保存的密钥 / Saved API keys cleared')
-        ttk.Button(win,text='清除本地密钥 / Clear saved keys',command=forget).grid(row=9,column=0,columnspan=2,pady=8)
+        ttk.Button(win,text='清除本地密钥 / Clear saved keys',command=forget).grid(row=len(fields)+3,column=0,columnspan=2,pady=8)
 
     def analyze(self):
         if not self.idle() or not self.cues: return

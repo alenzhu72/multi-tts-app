@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 
-FIELDS = ('base', 'model', 'key', 'tts_base', 'tts_model', 'tts_key', 'fish_key')
+FIELDS = ('base', 'model', 'key', 'tts_base', 'tts_model', 'tts_key', 'fish_key', 'fish_model')
 
 def settings_path():
     return Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) / 'SRT-Voice-Studio' / 'settings.dpapi'

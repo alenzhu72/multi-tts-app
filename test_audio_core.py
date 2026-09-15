@@ -22,7 +22,7 @@ class PipelineTests(unittest.TestCase):
             request = call.call_args.args[0]
             self.assertEqual(request.full_url, 'https://api.fish.audio/v1/tts')
             self.assertEqual(request.get_header('Authorization'), 'Bearer secret')
-            self.assertEqual(request.get_header('Model'), 's2-pro')
+            self.assertEqual(request.get_header('Model'), 's2.1-pro-free')
             self.assertIn(b'fish-model-id', request.data)
             self.assertEqual(path.read_bytes(), b'fish-mp3')
 

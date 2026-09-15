@@ -178,10 +178,12 @@ def synthesize(text, voice, path, config, cancel):
             'mp3_bitrate': 192, 'normalize': True, 'prosody': {
                 'speed': max(.5, min(2, 1 + config['rate'] / 100)), 'volume': 0,
                 'normalize_loudness': True}}, ensure_ascii=False).encode(), {
-            'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config['fish_key'], 'model': 's2-pro'})
+            'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config['fish_key'], 'model': config.get('fish_model') or 's2.1-pro-free'})
         try:
             with urllib.request.urlopen(req, timeout=300) as response: path.write_bytes(response.read())
         except urllib.error.HTTPError as error:
+            if error.code == 402:
+                raise RuntimeError('Fish Audio HTTP 402：当前模型的 API 额度或计费条件未满足。请在设置中选择与网页一致的模型（例如 s2.1-pro-free），或检查 Fish API 余额。 / Check model selection and API credits.') from None
             raise RuntimeError(f'Fish Audio HTTP {error.code}：请检查 API Key 和声音模型 ID。 / Check Fish API key and model ID.') from None
         except (TimeoutError, urllib.error.URLError):
             raise RuntimeError('Fish Audio 网络或读取超时，请重试。 / Fish Audio network or read timeout; retry.') from None
