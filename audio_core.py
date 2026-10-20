@@ -166,7 +166,10 @@ async def edge_save(text, voice, path, rate, cancel):
             await asyncio.sleep(1 + attempt)
 
 def synthesize(text, voice, path, config, cancel):
-    if config['engine'] == 'Edge TTS':
+    if config['engine'] == 'Kokoro 本地 / Local':
+        from kokoro_local import save_wav
+        save_wav(text, voice, path, config, cancel)
+    elif config['engine'] == 'Edge TTS':
         asyncio.run(edge_save(text, voice, path, config['rate'], cancel))
     elif config['engine'] == 'Fish Audio':
         if not config.get('fish_key'):
@@ -223,7 +226,7 @@ def export_audio(cues, cast, config, output, cancel, progress, synthesizer=synth
             for index, cue in enumerate(cues):
                 if cancel.is_set(): raise InterruptedError('已取消 / Cancelled')
                 progress(f'生成音频 / Generating {index+1}/{len(cues)} · {cue["speaker"]}')
-                mp3, wav = tmp/'line.mp3', tmp/'line.wav'
+                mp3, wav = tmp/('line-source.wav' if config.get('engine') == 'Kokoro 本地 / Local' else 'line.mp3'), tmp/'line.wav'
                 try:
                     synthesizer(cue['text'], effective_voice(cue['speaker'],cast,config.get('single_narrator',False)), mp3, config, cancel)
                 except InterruptedError:

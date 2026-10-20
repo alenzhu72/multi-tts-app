@@ -6,6 +6,34 @@ from desktop import App
 from audio_core import NARRATOR
 
 class DesktopModeTests(unittest.TestCase):
+    def test_kokoro_preview_extension_and_project(self):
+        import kokoro_local as k
+        with patch('desktop.load_settings',return_value={}):
+            app = App()
+        app.withdraw()
+        self.addCleanup(app.destroy)
+        self.addCleanup(app.preview_dir.cleanup)
+        app.vars['engine'].set(k.ENGINE)
+        app.change_engine()
+        self.assertEqual(app.cast[NARRATOR]['voice'],k.voice_label('af_heart'))
+        self.assertEqual(str(app.language_menu['state']), 'disabled')
+        with tempfile.TemporaryDirectory() as folder:
+            for name in k.MODEL_FILES:
+                (Path(folder)/name).write_bytes(b'test')
+            app.vars['kokoro_dir'].set(folder)
+            with patch('desktop.synthesize') as synth, patch.object(app,'run',side_effect=lambda work,done:work()):
+                app.preview('Hello',k.voice_label('am_michael'))
+                self.assertEqual(synth.call_args.args[2].suffix,'.wav')
+                self.assertEqual(synth.call_args.args[3]['engine'], k.ENGINE)
+            project = str(Path(folder)/'project.json')
+            with patch('desktop.filedialog.asksaveasfilename',return_value=project):
+                app.save_project()
+            app.vars['engine'].set('Edge TTS')
+            with patch('desktop.filedialog.askopenfilename',return_value=project):
+                app.load_project()
+            self.assertEqual(app.vars['engine'].get(),k.ENGINE)
+            self.assertEqual(app.vars['kokoro_dir'].get(),folder)
+
     def test_mode_preview_export_and_project_roundtrip(self):
         with patch('desktop.load_settings',return_value={}):
             app = App()

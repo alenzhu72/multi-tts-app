@@ -13,12 +13,13 @@ from audio_core import NARRATOR, DEFAULT_VOICE, MINIMAX_BASE, MINIMAX_MODEL, is_
 from text_srt import read_text, text_to_cues, to_srt
 from local_settings import load_settings, save_settings, clear_settings
 from edge_voices import VOICES
+import kokoro_local
 from voice_languages import DEFAULT_LANGUAGE, language_options, matching_voices, default_voice, preview_text
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('声幕 · SRT Voice Studio v1.0.9')
+        self.title('声幕 · SRT Voice Studio v1.1.0')
         self.geometry('1380x880'); self.minsize(1200,720)
         self.cues, self.cast = [], {NARRATOR:dict(enabled=True, voice=DEFAULT_VOICE)}
         self.voices = list(VOICES)
@@ -29,6 +30,7 @@ class App(tk.Tk):
             'voice_mode':'单一画外音 / Single narrator','engine':'Edge TTS','rate':'0','timing':'连续朗读 / Continuous',
             'base':MINIMAX_BASE,'model':MINIMAX_MODEL,'key':'',
             'tts_base':'','tts_model':'','tts_key':'','fish_key':'','fish_model':'s2.1-pro-free', 'filter':'', 'language':DEFAULT_LANGUAGE,
+            'kokoro_dir':str(kokoro_local.default_directory()),
         }.items()}
         settings_error = False
         try:
@@ -52,7 +54,7 @@ class App(tk.Tk):
         ttk.Checkbutton(text_tools,text='SRT 包含人物标记 / Include speaker labels',variable=self.include_speakers).pack(side='left',padx=10)
         controls = ttk.Frame(self,padding=(14,0,14,10)); controls.pack(fill='x')
         ttk.Label(controls,text='引擎 / Engine').pack(side='left')
-        engine = ttk.Combobox(controls,textvariable=self.vars['engine'],values=['Edge TTS','Fish Audio','兼容 TTS API / Compatible'],state='readonly',width=24)
+        engine = ttk.Combobox(controls,textvariable=self.vars['engine'],values=['Edge TTS',kokoro_local.ENGINE,'Fish Audio','兼容 TTS API / Compatible'],state='readonly',width=24)
         engine.pack(side='left',padx=6); engine.bind('<<ComboboxSelected>>',self.change_engine)
         ttk.Button(controls,text='AI 识别人物 / Identify',command=self.analyze).pack(side='left',padx=5)
         ttk.Button(controls,text='添加人物 / Add',command=self.add_actor).pack(side='left',padx=5)
@@ -72,6 +74,10 @@ class App(tk.Tk):
         mode_menu.pack(side='left',padx=8)
         mode_menu.bind('<<ComboboxSelected>>',lambda e:self.render())
         ttk.Label(mode_bar,text='单一画外音无需 AI 识别或 AI 密钥 / Single narrator needs no AI identification or AI key').pack(side='left')
+        local_bar = ttk.Frame(self,padding=(14,0,14,6)); local_bar.pack(fill='x')
+        ttk.Button(local_bar,text='下载 Kokoro 模型 / Download',command=self.download_kokoro).pack(side='left')
+        ttk.Button(local_bar,text='选择模型文件夹 / Model folder',command=self.choose_kokoro_folder).pack(side='left',padx=6)
+        ttk.Label(local_bar,text='Kokoro：本地英语男女声，无需密钥；首次下载约 337 MB / Offline English voices').pack(side='left')
         self.tabs = ttk.Notebook(self); self.tabs.pack(fill='both',expand=True,padx=14)
         table_page = ttk.Frame(self.tabs); self.tabs.add(table_page,text='字幕校正 / Subtitles')
         self.tree = ttk.Treeview(table_page,columns=('id','time','speaker','voice','text'),show='headings',selectmode='extended')
@@ -115,6 +121,8 @@ class App(tk.Tk):
         if not -50 <= data['rate'] <= 100: raise ValueError('语速应在 -50 至 100 之间。 / Rate must be between -50 and 100.')
         if data['engine'] == 'Fish Audio' and not data.get('fish_key'):
             raise ValueError('请先在设置中填写 Fish Audio API Key。 / Enter your Fish Audio API Key in Settings first.')
+        if data['engine'] == kokoro_local.ENGINE:
+            kokoro_local.check_files(data['kokoro_dir'])
         if data['engine'] == '兼容 TTS API / Compatible' and not all(data[k] for k in ('tts_base','tts_model')):
             raise ValueError('请先配置 TTS 接口地址和模型。 / Configure the TTS base URL and model first.')
         return data
@@ -238,6 +246,7 @@ class App(tk.Tk):
             self.cast.setdefault(c['speaker'],dict(enabled=False,voice=self.cast[NARRATOR]['voice']))
 
     def render(self):
+        self.language_menu.configure(state='disabled' if self.vars['engine'].get() == kokoro_local.ENGINE else 'readonly')
         selected = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
         for i,c in enumerate(self.cues):
@@ -251,6 +260,8 @@ class App(tk.Tk):
         self.cast_vars = {}
         needle = self.vars['filter'].get().lower()
         voices = matching_voices(self.voices,self.vars['language'].get(),needle) if self.vars['engine'].get()=='Edge TTS' else (['儿童男声（填 Fish 模型 ID）','儿童女声（填 Fish 模型 ID）','中年男声（填 Fish 模型 ID）','中年女声（填 Fish 模型 ID）','老年男声（填 Fish 模型 ID）','老年女声（填 Fish 模型 ID）','沙哑男声（填 Fish 模型 ID）','慈祥女声（填 Fish 模型 ID）'] if self.vars['engine'].get()=='Fish Audio' else ['alloy','echo','fable','onyx','nova','shimmer'])
+        if self.vars['engine'].get() == kokoro_local.ENGINE:
+            voices = kokoro_local.voice_choices(needle)
         for row,(name,actor) in enumerate(self.cast.items()):
             enabled,voice = tk.BooleanVar(value=actor['enabled']),tk.StringVar(value=actor['voice'])
             self.cast_vars[name] = (enabled,voice)
@@ -350,9 +361,26 @@ class App(tk.Tk):
         voice = self.selected_default_voice()
         for actor in self.cast.values(): actor['voice'] = voice
         self.render()
+        if self.vars['engine'].get() == kokoro_local.ENGINE:
+            self.status.set('Kokoro 已选择：英语离线配音。人物页选择美式/英式男女声；多角色模式可分别分配。 / Offline English TTS ready.')
 
     def selected_default_voice(self):
+        if self.vars['engine'].get() == kokoro_local.ENGINE:
+            return kokoro_local.voice_label(kokoro_local.DEFAULT_VOICE)
         return default_voice(self.voices,self.vars['language'].get()) if self.vars['engine'].get()=='Edge TTS' else ('儿童男声（填 Fish 模型 ID）' if self.vars['engine'].get()=='Fish Audio' else 'alloy')
+
+    def choose_kokoro_folder(self):
+        if not self.idle(): return
+        folder = filedialog.askdirectory(title='选择 Kokoro 模型文件夹 / Select Kokoro model folder')
+        if folder:
+            self.vars['kokoro_dir'].set(folder)
+            self.status.set('Kokoro 模型目录 / Model directory: '+folder)
+
+    def download_kokoro(self):
+        folder = self.vars['kokoro_dir'].get()
+        def done(path):
+            self.status.set('Kokoro 模型已准备好，可离线试听 / Models ready: '+path)
+        self.run(lambda:kokoro_local.download(folder,self.cancel,self.progress),done)
 
     def change_language(self,event=None):
         self.vars['filter'].set('')
@@ -365,6 +393,10 @@ class App(tk.Tk):
         self.status.set('已更新角色声音语言，可逐个调整 / Voice language updated; review individual voice assignments')
 
     def refresh_voices(self):
+        if self.vars['engine'].get() == kokoro_local.ENGINE:
+            self.render_cast()
+            self.status.set('Kokoro 提供 28 个英语预设声音；af/bf 女声，am/bm 男声 / 28 offline English voices')
+            return
         async def load():
             import edge_tts
             return await asyncio.wait_for(edge_tts.list_voices(),45)
@@ -388,7 +420,7 @@ class App(tk.Tk):
         try: config = self.config()
         except Exception as error: messagebox.showerror('设置错误 / Invalid settings',str(error)); return
         import uuid
-        path = Path(self.preview_dir.name)/(uuid.uuid4().hex+'.mp3')
+        path = Path(self.preview_dir.name)/(uuid.uuid4().hex+('.wav' if config['engine'] == kokoro_local.ENGINE else '.mp3'))
         def done(_):
             os.startfile(str(path)); self.status.set('已在默认播放器打开试听。 / Preview opened in the default player.')
         self.run(lambda:synthesize(text,voice,path,config,self.cancel),done)
@@ -400,6 +432,12 @@ class App(tk.Tk):
         path = filedialog.asksaveasfilename(defaultextension='.mp3',filetypes=[('MP3 音频 / Audio','*.mp3'),('WAV 音频 / Audio','*.wav')],initialfile='故事配音.mp3')
         if not path: return
         cues,cast = copy.deepcopy(self.cues),copy.deepcopy(self.cast)
+        if config['engine'] == kokoro_local.ENGINE:
+            try:
+                for cue in cues:
+                    kokoro_local.voice_id(effective_voice(cue['speaker'],cast,config['single_narrator']))
+            except ValueError as error:
+                messagebox.showerror('声音设置错误 / Invalid voice',str(error)); return
         def done(path): self.status.set('已导出 / Exported: '+path); messagebox.showinfo('导出完成 / Export complete',path)
         self.run(lambda:export_audio(cues,cast,config,path,self.cancel,self.progress),done)
 
@@ -445,6 +483,15 @@ class App(tk.Tk):
 
 if __name__ == '__main__':
     import sys
-    if '--smoke-test' in sys.argv:
+    if '--kokoro-smoke-test' in sys.argv:
+        from verify_kokoro import verify
+        try:
+            verify(sys.argv[sys.argv.index('--kokoro-smoke-test') + 1])
+        except Exception:
+            import traceback
+            Path(sys.argv[sys.argv.index('--kokoro-smoke-test') + 1]).mkdir(parents=True, exist_ok=True)
+            (Path(sys.argv[sys.argv.index('--kokoro-smoke-test') + 1])/'error.txt').write_text(traceback.format_exc(), encoding='utf-8')
+            raise
+    elif '--smoke-test' in sys.argv:
         app = App(); app.update(); app.destroy()
     else: App().mainloop()

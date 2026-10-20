@@ -2,7 +2,7 @@
 
 [下载 Windows EXE / Download](https://github.com/alenzhu72/multi-tts-app/releases/latest) · [桌面版使用说明 / Desktop guide](DESKTOP-README.md)
 
-**v1.0.8：新增 Fish Audio TTS 引擎，可按角色手动分配 Fish 声音模型；保留单一画外音模式。**
+**v1.1.0：新增 Kokoro 本地英语引擎，28 个美式/英式男女声，支持离线试听、多角色配音和 WAV/MP3 导出。** 完整便携包含模型，参见 [Kokoro 使用说明](KOKORO-QUICKSTART.md)。保留 Edge、Fish Audio 和兼容 TTS API。
 
 **新增 Windows 桌面版：双击 `dist/SRT-Voice-Studio.exe`。** 支持 Edge TTS、AI 故事人物识别、选择人物独立配音，其余归画外音，并导出整段 MP3 / WAV。参见 [桌面版说明](DESKTOP-README.md)。以下为保留的旧网页原型说明。
 
